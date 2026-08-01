@@ -1,0 +1,13 @@
+[package]
+name = "conway_agi"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+crossterm = "0.29.0"
+rand = "0.10.2"
+ratatui = "0.30.2"
+
+[dev-dependencies]
+rand_chacha = "0.10.0"
