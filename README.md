@@ -8,6 +8,10 @@ A terminal-based Conway's Game of Life implemented in Rust, extended with simple
 cargo run --release
 ```
 
+## Demo
+
+![Conway AGI simulation running in the terminal](conway-agi.gif)
+
 ## Controls
 
 | Key | Action |
