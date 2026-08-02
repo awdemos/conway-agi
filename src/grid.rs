@@ -77,6 +77,34 @@ impl Grid {
         (count, genomes, brains)
     }
 
+    pub fn neighbors_with_attachments(
+        &self,
+        x: usize,
+        y: usize,
+    ) -> (usize, Vec<Genome>, Vec<Brain>, Vec<crate::cell::Attachment>) {
+        let xi = x as isize;
+        let yi = y as isize;
+        let mut count = 0;
+        let mut genomes = Vec::with_capacity(8);
+        let mut brains = Vec::with_capacity(8);
+        let mut attachments = Vec::with_capacity(8);
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                let n = self.cell_at(xi + dx, yi + dy);
+                if n.is_alive() {
+                    count += 1;
+                    genomes.push(n.genome);
+                    brains.push(n.brain);
+                    attachments.push(n.attachment);
+                }
+            }
+        }
+        (count, genomes, brains, attachments)
+    }
+
     pub fn live_cells(&self) -> usize {
         self.cells.iter().filter(|c| c.is_alive()).count()
     }

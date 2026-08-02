@@ -1,10 +1,13 @@
+use crate::avatar::Avatar;
 use crate::cell::Cell;
 use crate::decoder::Decoder;
 use crate::grid::Grid;
 use crate::reward::RewardChannel;
 use crate::rules::{StepResult, step};
 use crate::signal::SignalGrid;
+use rand::RngExt;
 use rand::rngs::ThreadRng;
+use std::collections::HashMap;
 
 pub struct Simulation {
     current: Grid,
@@ -16,6 +19,8 @@ pub struct Simulation {
     generation: u64,
     rng: ThreadRng,
     last_result: StepResult,
+    avatar: Avatar,
+    transcripts: HashMap<(usize, usize), Vec<(String, String)>>,
 }
 
 impl Simulation {
@@ -24,6 +29,7 @@ impl Simulation {
         let next = Grid::new(width, height);
         let signals = SignalGrid::new(width, height);
         let next_signals = SignalGrid::new(width, height);
+        let avatar = Avatar::new(width / 2, height / 2);
         Self {
             current,
             next,
@@ -39,12 +45,76 @@ impl Simulation {
                 emissions: 0,
                 rewarded: 0,
             },
+            avatar,
+            transcripts: HashMap::new(),
         }
     }
 
     pub fn with_seed(mut self, density: f64) -> Self {
         self.current.randomize(density, &mut self.rng);
+        self.name_live_cells();
         self
+    }
+
+    pub fn avatar(&self) -> &Avatar {
+        &self.avatar
+    }
+
+    pub fn move_avatar(&mut self, dx: i32, dy: i32) {
+        self.avatar
+            .move_by(dx, dy, self.current.width(), self.current.height());
+    }
+
+    pub fn query_cell(&self, x: usize, y: usize) -> Option<Cell> {
+        let (w, h) = self.current.size();
+        if x >= w || y >= h {
+            return None;
+        }
+        let cell = self.current.get(x, y);
+        if cell.is_alive() { Some(cell) } else { None }
+    }
+
+    pub fn cell_transcript(&self, x: usize, y: usize) -> &[(String, String)] {
+        self.transcripts.get(&(x, y)).map_or(&[], |v| v.as_slice())
+    }
+
+    pub fn record_exchange(&mut self, x: usize, y: usize, player: String, cell: String) {
+        self.transcripts
+            .entry((x, y))
+            .or_default()
+            .push((player, cell));
+    }
+
+    fn name_live_cells(&mut self) {
+        let mut positions = Vec::new();
+        for (x, y, cell) in self.current.iter() {
+            if cell.is_alive() && cell.name.iter().all(|b| *b == 0) {
+                positions.push((x, y));
+            }
+        }
+        let mut names = Vec::with_capacity(positions.len());
+        for _ in 0..positions.len() {
+            names.push(self.random_name());
+        }
+        for ((x, y), name) in positions.into_iter().zip(names) {
+            if let Some(cell) = self.current.get_mut(x, y) {
+                cell.name = name;
+            }
+        }
+    }
+
+    fn random_name(&mut self) -> [u8; 4] {
+        let consonants = b"bcdfghjklmnpqrstvwxz";
+        let vowels = b"aeiouy";
+        let mut name = [0u8; 4];
+        for (i, slot) in name.iter_mut().enumerate() {
+            *slot = if i % 2 == 0 {
+                consonants[self.rng.random_range(0..consonants.len())]
+            } else {
+                vowels[self.rng.random_range(0..vowels.len())]
+            };
+        }
+        name
     }
 
     pub fn grid(&self) -> &Grid {
@@ -90,8 +160,83 @@ impl Simulation {
         self.decoder.message()
     }
 
+    pub fn poke(&mut self, x: usize, y: usize) {
+        let w = self.current.width();
+        let h = self.current.height();
+        if x >= w || y >= h {
+            return;
+        }
+        let mut cell = self.current.get(x, y);
+        if cell.is_alive() {
+            cell.absorb(80);
+            cell.soothe();
+            cell.agitation = 0;
+            cell.violence = 0;
+            self.signals.add(x, y, 64);
+        } else {
+            cell = Cell::alive(crate::cell::Genome::WILD);
+            cell.energy = 120;
+            self.signals.add(x, y, 96);
+        }
+        self.current.set(x, y, cell);
+    }
+
+    pub fn dominant_state(&self) -> (crate::cell::CellState, usize) {
+        let mut counts = [0usize; 6];
+        for (_, _, cell) in self.current.iter() {
+            if cell.is_alive() {
+                counts[cell.state as usize] += 1;
+            }
+        }
+        let mut best = crate::cell::CellState::Calm;
+        let mut best_count = counts[best as usize];
+        for (idx, count) in counts.iter().enumerate() {
+            if *count > best_count {
+                best_count = *count;
+                best = match idx {
+                    0 => crate::cell::CellState::Calm,
+                    1 => crate::cell::CellState::Anxious,
+                    2 => crate::cell::CellState::Angry,
+                    3 => crate::cell::CellState::Sleepy,
+                    4 => crate::cell::CellState::Passion,
+                    5 => crate::cell::CellState::Quietude,
+                    _ => crate::cell::CellState::Calm,
+                };
+            }
+        }
+        (best, best_count)
+    }
+
+    pub fn attachment_summary(&self) -> crate::cell::Attachment {
+        let mut total = crate::cell::Attachment::new();
+        let mut count = 0usize;
+        for (_, _, cell) in self.current.iter() {
+            if cell.is_alive() {
+                total.to_budding = total.to_budding.saturating_add(cell.attachment.to_budding);
+                total.to_emitting = total
+                    .to_emitting
+                    .saturating_add(cell.attachment.to_emitting);
+                total.to_resting = total.to_resting.saturating_add(cell.attachment.to_resting);
+                total.to_crowds = total.to_crowds.saturating_add(cell.attachment.to_crowds);
+                total.to_solitude = total
+                    .to_solitude
+                    .saturating_add(cell.attachment.to_solitude);
+                count += 1;
+            }
+        }
+        if count > 0 {
+            total.to_budding /= count as i8;
+            total.to_emitting /= count as i8;
+            total.to_resting /= count as i8;
+            total.to_crowds /= count as i8;
+            total.to_solitude /= count as i8;
+        }
+        total
+    }
+
     pub fn reset(&mut self, density: f64) {
         self.current.randomize(density, &mut self.rng);
+        self.name_live_cells();
         self.signals.clear();
         self.next_signals.clear();
         self.rewards = RewardChannel::default();
@@ -103,6 +248,8 @@ impl Simulation {
             emissions: 0,
             rewarded: 0,
         };
+        self.avatar = Avatar::new(self.current.width() / 2, self.current.height() / 2);
+        self.transcripts.clear();
     }
 
     pub fn population(&self) -> usize {
@@ -151,7 +298,7 @@ impl Simulation {
         self.rewards.progress()
     }
 
-    fn dominant_signal_type(&self) -> u8 {
+    pub fn dominant_signal_type(&self) -> u8 {
         let mut counts = [0usize; 16];
         for (_, _, cell) in self.current.iter() {
             if cell.is_alive() {
