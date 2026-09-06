@@ -467,7 +467,7 @@ impl App {
         let transcript = self.sim.cell_transcript(x, y);
         let mut text_lines: Vec<Line> = lines
             .into_iter()
-            .map(|l| Text::from(l).lines.into_iter().next().unwrap())
+            .filter_map(|l| Text::from(l).lines.into_iter().next())
             .collect();
         if !transcript.is_empty() {
             text_lines.push(Line::from(Span::styled(
